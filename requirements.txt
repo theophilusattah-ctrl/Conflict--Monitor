@@ -1,5 +1,0 @@
-requests>=2.31
-pandas>=2.0
-supabase>=2.4
-python-dateutil>=2.8
-numpy>=1.26
