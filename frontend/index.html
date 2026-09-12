@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conflict Monitor — Nigeria</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --bg: #0f1418;
+    --panel: #161d24;
+    --panel-border: #26313a;
+    --text: #dfe6eb;
+    --text-dim: #8fa1ab;
+    --tier-high: #c9433f;
+    --tier-moderate: #d98b3f;
+    --tier-watch: #d9c23f;
+    --tier-normal: #3f8f6b;
+    --accent: #4fa3c4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Iowan Old Style", "Georgia", ui-serif, serif;
+    font-size: 15px;
+  }
+  header {
+    padding: 20px 28px 16px;
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  header h1 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.01em;
+  }
+  header p {
+    margin: 4px 0 0;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  #layout {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 0;
+    height: calc(100vh - 74px);
+  }
+  #map { height: 100%; background: #10161b; }
+  #sidebar {
+    border-left: 1px solid var(--panel-border);
+    overflow-y: auto;
+    padding: 20px;
+  }
+  .section-title {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+    margin: 0 0 10px;
+  }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 28px; }
+  th, td {
+    text-align: left;
+    padding: 7px 6px;
+    font-size: 0.83rem;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  th { color: var(--text-dim); font-weight: 500; font-size: 0.75rem; }
+  .tier-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 7px;
+  }
+  .tier-High { background: var(--tier-high); }
+  .tier-Moderate { background: var(--tier-moderate); }
+  .tier-Watch { background: var(--tier-watch); }
+  .tier-Normal { background: var(--tier-normal); }
+  .empty-note {
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    border: 1px dashed var(--panel-border);
+    padding: 12px;
+    border-radius: 4px;
+  }
+  .legend {
+    position: absolute;
+    bottom: 20px; left: 20px;
+    background: rgba(22,29,36,0.92);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    padding: 10px 14px;
+    font-size: 0.8rem;
+    z-index: 500;
+  }
+  .legend div { margin: 3px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Conflict Monitor</h1>
+    <p>Nigeria — early warning dashboard</p>
+  </div>
+  <p id="last-updated">last updated —</p>
+</header>
+
+<div id="layout">
+  <div id="map"></div>
+  <div id="sidebar">
+    <p class="section-title">STATE / REGION RISK</p>
+    <table id="region-table">
+      <thead><tr><th>State</th><th>Tier</th><th>Composite</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <p class="section-title">SETTLEMENT RISK</p>
+    <table id="settlement-table">
+      <thead><tr><th>Settlement</th><th>State</th><th>Tier</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <p class="section-title">CONFIGURATION</p>
+    <div class="empty-note">
+      Connect this page to your Supabase project: set <code>SUPABASE_URL</code>
+      and <code>SUPABASE_ANON_KEY</code> in <code>frontend/config.js</code>.
+      Until configured, tables and map will show no data.
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script>
+  const tierColor = {
+    High: "#c9433f",
+    Moderate: "#d98b3f",
+    Watch: "#d9c23f",
+    Normal: "#3f8f6b",
+  };
+
+  const map = L.map("map", { zoomControl: true }).setView([9.082, 8.6753], 6.3);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    attribution: "&copy; OpenStreetMap &copy; CARTO",
+    maxZoom: 12,
+  }).addTo(map);
+
+  const legend = L.control({ position: "bottomleft" });
+  legend.onAdd = function () {
+    const div = L.DomUtil.create("div", "legend");
+    div.innerHTML = Object.entries(tierColor)
+      .map(([tier, color]) =>
+        `<div><span class="tier-dot" style="background:${color}"></span>${tier}</div>`
+      ).join("");
+    return div;
+  };
+  legend.addTo(map);
+
+  async function loadData() {
+    if (typeof SUPABASE_URL === "undefined" || !SUPABASE_URL) {
+      document.getElementById("last-updated").textContent = "not connected";
+      return;
+    }
+    const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const { data: regions } = await client
+      .from("region_risk_summary")
+      .select("*")
+      .order("composite_risk", { ascending: false });
+
+    const regionBody = document.querySelector("#region-table tbody");
+    regionBody.innerHTML = "";
+    (regions || []).forEach((r) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${r.state_name}</td>
+        <td><span class="tier-dot tier-${r.risk_tier}"></span>${r.risk_tier || "-"}</td>
+        <td>${(r.composite_risk ?? 0).toFixed(1)}</td>`;
+      regionBody.appendChild(tr);
+    });
+
+    const { data: settlements } = await client
+      .from("vulnerability_fvi")
+      .select("*")
+      .order("ahp_composite_score", { ascending: false })
+      .limit(20);
+
+    const settlementBody = document.querySelector("#settlement-table tbody");
+    settlementBody.innerHTML = "";
+    (settlements || []).forEach((s) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${s.settlement_name || "-"}</td>
+        <td>${s.state_name}</td>
+        <td><span class="tier-dot tier-${s.risk_tier}"></span>${s.risk_tier || "-"}</td>`;
+      settlementBody.appendChild(tr);
+    });
+
+    document.getElementById("last-updated").textContent =
+      "last updated " + new Date().toLocaleString("en-GB", { timeZone: "Africa/Lagos" });
+  }
+
+  loadData();
+  setInterval(loadData, 5 * 60 * 1000); // refresh every 5 minutes
+</script>
+
+</body>
+</html>
